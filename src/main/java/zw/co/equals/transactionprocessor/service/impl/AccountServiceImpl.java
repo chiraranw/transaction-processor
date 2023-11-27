@@ -12,10 +12,13 @@ import zw.co.equals.transactionprocessor.model.Account;
 import zw.co.equals.transactionprocessor.model.AccountStatus;
 import zw.co.equals.transactionprocessor.repository.AccountRepository;
 import zw.co.equals.transactionprocessor.service.AccountService;
+import zw.co.equals.transactionprocessor.service.RedisService;
 import zw.co.equals.transactionprocessor.service.TransactionService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @Service
@@ -25,11 +28,13 @@ public class AccountServiceImpl implements AccountService {
     private final ModelMapper modelMapper;
 
     private final TransactionService transactionService;
+    private final RedisService redisService;
 
-    public AccountServiceImpl(AccountRepository accountRepository, ModelMapper modelMapper, TransactionService transactionService) {
+    public AccountServiceImpl(AccountRepository accountRepository, ModelMapper modelMapper, TransactionService transactionService, RedisService redisService) {
         this.accountRepository = accountRepository;
         this.modelMapper = modelMapper;
         this.transactionService = transactionService;
+        this.redisService = redisService;
     }
 
     @Override
@@ -52,8 +57,9 @@ public class AccountServiceImpl implements AccountService {
                 .accountNumber(request.getAccountNumber()).build());
         log.info("Credit transaction processed successfully: {}", newRecord);
 
-        // TODO: 24/11/2023 Update Redis on a different thread
         // TODO: 24/11/2023 Push a notification  on a different thread
+
+        CompletableFuture.runAsync(() -> redisService.setBalance(account.getAccountNumber(), newRecord.getCurrentBalance()));
 
         return modelMapper.map(newRecord, AccountDto.class);
     }
@@ -66,7 +72,18 @@ public class AccountServiceImpl implements AccountService {
     @Override
     public BalInquiryResponse balance(String accountNumber) {
         log.info("Inquiring balance for account :{}", accountNumber);
-        //TODO check in redis first
+
+        Optional<BigDecimal> balance = redisService.getBalance(accountNumber);
+
+        if(balance.isPresent()){
+            return BalInquiryResponse
+                    .builder()
+                    .accountNumber(accountNumber)
+                    .amount(balance.get())
+                    .date(LocalDateTime.now())
+                    .build();
+        }
+
         Account account = findAccount(accountNumber);
         return BalInquiryResponse
                 .builder()
